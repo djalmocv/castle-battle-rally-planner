@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-spin-slow: spin 20s linear infinite;
+}
+
+/* Print Overrides for elegant PDF exports */
+@media print {
+  /* Hide the React core app with dark design */
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+  
+  .no-print,
+  nav,
+  header,
+  footer,
+  aside,
+  button,
+  .print-hidden {
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Exclusively display printable area with its native layouts */
+  #print-area {
+    visibility: visible !important;
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    position: relative !important;
+    inset: 0 !important;
+  }
+}
+
+/* Custom visual filters */
+.animate-spin-slow {
+  animation: spin 20s linear infinite;
+}
+

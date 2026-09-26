@@ -1,0 +1,6 @@
+{
+  "name": "Castle Battle Rally Planner",
+  "description": "An interactive map and planning tool to automatically and manually arrange 2x2 rally lead city positions surrounding a 12x12 central castle.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
