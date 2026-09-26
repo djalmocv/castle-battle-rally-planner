@@ -1,5 +1,6 @@
-import { RallyLead, PriorityLevel, GridSettings } from '../types';
+import { RallyLead, PriorityLevel, GridSettings, Alliance } from '../types';
 import { getMarchTimeToCastle, formatMarchTime } from './march';
+import { getAllianceById } from '../constants';
 
 /**
  * Wraps a value in quotes and neutralizes spreadsheet formula injection by
@@ -15,25 +16,26 @@ export function escapeCell(value: string): string {
 
 /**
  * Exports rally lead assignments to CSV format.
- * CSV format: Rally Lead,Priority,X,Y,Status,March,Notes
+ * CSV format: Rally Lead,Alliance,Priority,X,Y,Status,March
  */
-export function exportToCSV(leads: RallyLead[], settings: GridSettings): void {
-  const headers = ['Rally Lead', 'Priority', 'X', 'Y', 'Status', 'March', 'Notes'];
+export function exportToCSV(leads: RallyLead[], settings: GridSettings, alliances: Alliance[]): void {
+  const headers = ['Rally Lead', 'Alliance', 'Priority', 'X', 'Y', 'Status', 'March'];
 
   const rows = leads.map((lead) => {
     const xVal = lead.position !== null ? lead.position.x : 'Unassigned';
     const yVal = lead.position !== null ? lead.position.y : 'Unassigned';
     const status = lead.locked ? 'Locked' : 'Flexible';
     const priorityName = PriorityLevel[lead.priority] || lead.priority;
+    const allianceName = getAllianceById(alliances, lead.allianceId)?.name || '-';
     const march =
       lead.position !== null
         ? formatMarchTime(getMarchTimeToCastle(lead.position.x, lead.position.y, settings, !!lead.usesPet))
         : '-';
 
     const nameEscaped = escapeCell(lead.name);
-    const notesEscaped = escapeCell(lead.notes || '');
+    const allianceEscaped = escapeCell(allianceName);
 
-    return [nameEscaped, priorityName, xVal, yVal, status, march, notesEscaped].join(',');
+    return [nameEscaped, allianceEscaped, priorityName, xVal, yVal, status, march].join(',');
   });
   
   const csvContent = [headers.join(','), ...rows].join('\n');

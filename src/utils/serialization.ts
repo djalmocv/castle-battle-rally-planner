@@ -1,8 +1,7 @@
-import { GridSettings, RallyLead, PriorityLevel } from '../types';
+import { GridSettings, RallyLead, PriorityLevel, Alliance } from '../types';
 
 interface CompressedLead {
   n: string;          // Name
-  o?: string;         // Notes
   p: PriorityLevel;   // Priority
   x?: number;         // X coordinate (if preset)
   y?: number;         // Y coordinate (if preset)
@@ -10,6 +9,13 @@ interface CompressedLead {
   s?: string;         // Pet Slot ID (optional)
   u?: number;         // Uses Pet (1 = true, undefined = false)
   f?: number;         // Offline for SvS (1 = offline; undefined/absent = online)
+  al?: string;        // Alliance id (references an entry in CompressedLayout.al)
+}
+
+interface CompressedAlliance {
+  i: string; // id
+  n: string; // name
+  c: string; // colorId
 }
 
 interface CompressedLayout {
@@ -20,13 +26,14 @@ interface CompressedLayout {
   y: number;          // castleY
   m: '2x2' | '1x1';   // snapMode
   a?: 'both' | 'left' | 'right'; // autoSide
+  al?: CompressedAlliance[]; // alliance tag definitions
   le: CompressedLead[];
 }
 
 /**
- * Encodes settings and leads into a compact Base64 string for URL sharing.
+ * Encodes settings, leads, and alliance tags into a compact Base64 string for URL sharing.
  */
-export function serializeLayout(settings: GridSettings, leads: RallyLead[]): string {
+export function serializeLayout(settings: GridSettings, leads: RallyLead[], alliances: Alliance[]): string {
   const compressed: CompressedLayout = {
     w: settings.width,
     h: settings.height,
@@ -35,12 +42,12 @@ export function serializeLayout(settings: GridSettings, leads: RallyLead[]): str
     y: settings.castleY,
     m: settings.snapMode,
     a: settings.autoSide,
+    al: alliances.map((a) => ({ i: a.id, n: a.name, c: a.colorId })),
     le: leads.map((l) => {
       const c: CompressedLead = {
         n: l.name,
         p: l.priority,
       };
-      if (l.notes) c.o = l.notes;
       if (l.position) {
         c.x = l.position.x;
         c.y = l.position.y;
@@ -49,6 +56,7 @@ export function serializeLayout(settings: GridSettings, leads: RallyLead[]): str
       if (l.petSlotId) c.s = l.petSlotId;
       if (l.usesPet) c.u = 1;
       if (l.onlineForSvs === false) c.f = 1;
+      if (l.allianceId) c.al = l.allianceId;
       return c;
     }),
   };
@@ -71,6 +79,7 @@ export function serializeLayout(settings: GridSettings, leads: RallyLead[]): str
 export function deserializeLayout(hash: string): {
   settings: GridSettings;
   leads: RallyLead[];
+  alliances: Alliance[];
 } | null {
   if (!hash) return null;
 
@@ -96,17 +105,24 @@ export function deserializeLayout(hash: string): {
       return {
         id: `shared-${index}-${Date.now()}`,
         name: l.n || 'Unnamed',
-        notes: l.o || '',
         priority: l.p || PriorityLevel.Normal,
         position: l.x !== undefined && l.y !== undefined ? { x: l.x, y: l.y } : null,
         locked: l.l === 1,
         petSlotId: l.s,
         usesPet: l.u === 1,
         onlineForSvs: l.f === 1 ? false : true,
+        allianceId: l.al,
       };
     });
 
-    return { settings, leads };
+    // Build Alliance tag definitions
+    const alliances: Alliance[] = (parsed.al || []).map((a) => ({
+      id: a.i,
+      name: a.n,
+      colorId: a.c,
+    }));
+
+    return { settings, leads, alliances };
   } catch (err) {
     console.error('Failed to deserialize layout string', err);
     return null;

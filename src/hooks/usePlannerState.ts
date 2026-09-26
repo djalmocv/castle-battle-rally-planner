@@ -1,13 +1,15 @@
 import { useReducer, useEffect, useCallback, type Dispatch, type SetStateAction } from 'react';
-import { GridSettings, RallyLead } from '../types';
+import { GridSettings, RallyLead, Alliance } from '../types';
 
 const LOCAL_STORAGE_LEADS_KEY = 'castle_battle_leads';
 const LOCAL_STORAGE_SETTINGS_KEY = 'castle_battle_settings';
+const LOCAL_STORAGE_ALLIANCES_KEY = 'castle_battle_alliances';
 
-/** A single undoable snapshot of the planner: the roster plus the grid config. */
+/** A single undoable snapshot of the planner: the roster, grid config, and alliance tags. */
 export interface PlannerDocument {
   leads: RallyLead[];
   settings: GridSettings;
+  alliances: Alliance[];
 }
 
 interface HistoryState {
@@ -23,6 +25,7 @@ type Action =
   | { type: 'INIT'; document: PlannerDocument }
   | { type: 'SET_LEADS'; updater: SetStateAction<RallyLead[]> }
   | { type: 'SET_SETTINGS'; updater: SetStateAction<GridSettings> }
+  | { type: 'SET_ALLIANCES'; updater: SetStateAction<Alliance[]> }
   | { type: 'LOAD'; document: PlannerDocument }
   | { type: 'UNDO' }
   | { type: 'REDO' };
@@ -57,6 +60,12 @@ function reducer(state: HistoryState, action: Action): HistoryState {
       return commit(state, { ...state.present, settings });
     }
 
+    case 'SET_ALLIANCES': {
+      const alliances = resolve(action.updater, state.present.alliances);
+      if (alliances === state.present.alliances) return state;
+      return commit(state, { ...state.present, alliances });
+    }
+
     case 'LOAD':
       return commit(state, action.document);
 
@@ -88,8 +97,10 @@ function reducer(state: HistoryState, action: Action): HistoryState {
 export interface PlannerState {
   leads: RallyLead[];
   settings: GridSettings;
+  alliances: Alliance[];
   setLeads: Dispatch<SetStateAction<RallyLead[]>>;
   setSettings: Dispatch<SetStateAction<GridSettings>>;
+  setAlliances: Dispatch<SetStateAction<Alliance[]>>;
   /** Replace the whole document (share link, preset, template) as one undoable step. */
   loadDocument: (document: PlannerDocument) => void;
   /** Seed the document without recording history (initial load). */
@@ -108,11 +119,11 @@ export interface PlannerState {
 export function usePlannerState(initialSettings: GridSettings): PlannerState {
   const [state, dispatch] = useReducer(reducer, {
     past: [],
-    present: { leads: [], settings: initialSettings },
+    present: { leads: [], settings: initialSettings, alliances: [] },
     future: [],
   });
 
-  const { leads, settings } = state.present;
+  const { leads, settings, alliances } = state.present;
 
   // Persist roster (clearing storage when the roster is emptied).
   useEffect(() => {
@@ -128,6 +139,15 @@ export function usePlannerState(initialSettings: GridSettings): PlannerState {
     localStorage.setItem(LOCAL_STORAGE_SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
+  // Persist alliance tags (clearing storage when the list is emptied).
+  useEffect(() => {
+    if (alliances.length > 0) {
+      localStorage.setItem(LOCAL_STORAGE_ALLIANCES_KEY, JSON.stringify(alliances));
+    } else {
+      localStorage.removeItem(LOCAL_STORAGE_ALLIANCES_KEY);
+    }
+  }, [alliances]);
+
   const setLeads = useCallback<Dispatch<SetStateAction<RallyLead[]>>>(
     (updater) => dispatch({ type: 'SET_LEADS', updater }),
     []
@@ -135,6 +155,11 @@ export function usePlannerState(initialSettings: GridSettings): PlannerState {
 
   const setSettings = useCallback<Dispatch<SetStateAction<GridSettings>>>(
     (updater) => dispatch({ type: 'SET_SETTINGS', updater }),
+    []
+  );
+
+  const setAlliances = useCallback<Dispatch<SetStateAction<Alliance[]>>>(
+    (updater) => dispatch({ type: 'SET_ALLIANCES', updater }),
     []
   );
 
@@ -154,8 +179,10 @@ export function usePlannerState(initialSettings: GridSettings): PlannerState {
   return {
     leads,
     settings,
+    alliances,
     setLeads,
     setSettings,
+    setAlliances,
     loadDocument,
     initialize,
     undo,

@@ -3,7 +3,8 @@ import Header from './components/Header';
 import LeadPanel from './components/LeadPanel';
 import CastleMap from './components/CastleMap';
 import RallySyncPanel from './components/RallySyncPanel';
-import { RallyLead, GridSettings, SavedLayout, PriorityLevel, Location2D } from './types';
+import { RallyLead, GridSettings, SavedLayout, PriorityLevel, Location2D, Alliance } from './types';
+import { getAllianceById } from './constants';
 import { assignPositions } from './utils/assignment';
 import { exportToCSV, exportToPNG, getSVGImageBytes } from './utils/export';
 import { serializeLayout, deserializeLayout } from './utils/serialization';
@@ -24,41 +25,43 @@ const DEFAULT_SETTINGS: GridSettings = {
 
 // Demo Preset definitions for quick start
 const DEMO_PRESET_DEFAULT: Omit<RallyLead, 'id'>[] = [
-  { name: 'John', priority: PriorityLevel.Highest, notes: 'Main Infantry Rally', position: null, locked: false },
-  { name: 'Sarah', priority: PriorityLevel.High, notes: 'Cavalry Support', position: null, locked: false },
-  { name: 'Mike', priority: PriorityLevel.Highest, notes: 'Archers Core', position: null, locked: false },
-  { name: 'Emma', priority: PriorityLevel.Normal, notes: 'West Flank Defenses', position: null, locked: false },
-  { name: 'Alex', priority: PriorityLevel.Low, notes: 'Reserve Support', position: null, locked: false },
+  { name: 'John', priority: PriorityLevel.Highest, position: null, locked: false },
+  { name: 'Sarah', priority: PriorityLevel.High, position: null, locked: false },
+  { name: 'Mike', priority: PriorityLevel.Highest, position: null, locked: false },
+  { name: 'Emma', priority: PriorityLevel.Normal, position: null, locked: false },
+  { name: 'Alex', priority: PriorityLevel.Low, position: null, locked: false },
 ];
 
 const DEMO_PRESET_OMEGA: Omit<RallyLead, 'id'>[] = [
-  { name: 'Ragnar', priority: PriorityLevel.Highest, notes: 'L1 Rally Lead - Inf', position: null, locked: false },
-  { name: 'Athena', priority: PriorityLevel.Highest, notes: 'L1 Rally Lead - Cav', position: null, locked: false },
-  { name: 'Leonidas', priority: PriorityLevel.Highest, notes: 'L1 Rally Lead - Arch', position: null, locked: false },
-  { name: 'Empress', priority: PriorityLevel.High, notes: 'L2 Cavalry Main', position: null, locked: false },
-  { name: 'Shadow', priority: PriorityLevel.High, notes: 'L2 Infantry Main', position: null, locked: false },
-  { name: 'Kaiser', priority: PriorityLevel.High, notes: 'L2 Gate Garrison', position: null, locked: false },
-  { name: 'Blizzard', priority: PriorityLevel.Normal, notes: 'Alliance Garrison', position: null, locked: false },
-  { name: 'Viper', priority: PriorityLevel.Normal, notes: 'Cavalry Sweeper', position: null, locked: false },
-  { name: 'Phoenix', priority: PriorityLevel.Normal, notes: 'T5 Archer Core', position: null, locked: false },
-  { name: 'Ironclad', priority: PriorityLevel.Normal, notes: 'Defense Backup', position: null, locked: false },
-  { name: 'Warden', priority: PriorityLevel.Normal, notes: 'East Gate Watch', position: null, locked: false },
-  { name: 'Nomad', priority: PriorityLevel.Normal, notes: 'Siege Flanker', position: null, locked: false },
-  { name: 'Goliath', priority: PriorityLevel.Low, notes: 'Infantry Garrison', position: null, locked: false },
-  { name: 'Tempest', priority: PriorityLevel.Low, notes: 'Reinforcement Lead', position: null, locked: false },
-  { name: 'Maverick', priority: PriorityLevel.Low, notes: 'Cavalry Reinforcements', position: null, locked: false },
-  { name: 'Ghost', priority: PriorityLevel.Lowest, notes: 'Backup Garrison', position: null, locked: false },
-  { name: 'Cyclone', priority: PriorityLevel.Lowest, notes: 'Auxiliary Guard', position: null, locked: false },
-  { name: 'Whisper', priority: PriorityLevel.Lowest, notes: 'Fill Specialist', position: null, locked: false },
+  { name: 'Ragnar', priority: PriorityLevel.Highest, position: null, locked: false },
+  { name: 'Athena', priority: PriorityLevel.Highest, position: null, locked: false },
+  { name: 'Leonidas', priority: PriorityLevel.Highest, position: null, locked: false },
+  { name: 'Empress', priority: PriorityLevel.High, position: null, locked: false },
+  { name: 'Shadow', priority: PriorityLevel.High, position: null, locked: false },
+  { name: 'Kaiser', priority: PriorityLevel.High, position: null, locked: false },
+  { name: 'Blizzard', priority: PriorityLevel.Normal, position: null, locked: false },
+  { name: 'Viper', priority: PriorityLevel.Normal, position: null, locked: false },
+  { name: 'Phoenix', priority: PriorityLevel.Normal, position: null, locked: false },
+  { name: 'Ironclad', priority: PriorityLevel.Normal, position: null, locked: false },
+  { name: 'Warden', priority: PriorityLevel.Normal, position: null, locked: false },
+  { name: 'Nomad', priority: PriorityLevel.Normal, position: null, locked: false },
+  { name: 'Goliath', priority: PriorityLevel.Low, position: null, locked: false },
+  { name: 'Tempest', priority: PriorityLevel.Low, position: null, locked: false },
+  { name: 'Maverick', priority: PriorityLevel.Low, position: null, locked: false },
+  { name: 'Ghost', priority: PriorityLevel.Lowest, position: null, locked: false },
+  { name: 'Cyclone', priority: PriorityLevel.Lowest, position: null, locked: false },
+  { name: 'Whisper', priority: PriorityLevel.Lowest, position: null, locked: false },
 ];
 
 export default function App() {
-  // --- Core States (roster + grid config with undo/redo history) ---
+  // --- Core States (roster + grid config + alliance tags with undo/redo history) ---
   const {
     leads,
     settings,
+    alliances,
     setLeads,
     setSettings,
+    setAlliances,
     loadDocument,
     initialize,
     undo,
@@ -114,16 +117,26 @@ export default function App() {
     const hash = window.location.hash.substring(1);
     const decodedShared = deserializeLayout(hash);
     if (decodedShared) {
-      initialize({ leads: decodedShared.leads, settings: decodedShared.settings });
+      initialize({ leads: decodedShared.leads, settings: decodedShared.settings, alliances: decodedShared.alliances });
       triggerAlert('success', 'Shared layout successfully loaded from link!');
       return;
     }
 
-    // 3. Otherwise load the stored roster, or seed a first-run demo preset
+    // 3. Otherwise load the stored roster (+ alliances), or seed a first-run demo preset
+    let storedAlliances: Alliance[] = [];
+    const storedAlliancesRaw = localStorage.getItem('castle_battle_alliances');
+    if (storedAlliancesRaw) {
+      try {
+        storedAlliances = JSON.parse(storedAlliancesRaw);
+      } catch (e) {
+        console.error('Failed to parse alliances from storage', e);
+      }
+    }
+
     const storedLeads = localStorage.getItem('castle_battle_leads');
     if (storedLeads) {
       try {
-        initialize({ leads: JSON.parse(storedLeads), settings: initialSettings });
+        initialize({ leads: JSON.parse(storedLeads), settings: initialSettings, alliances: storedAlliances });
         return;
       } catch (e) {
         console.error('Failed to parse leads from storage', e);
@@ -135,7 +148,7 @@ export default function App() {
       ...item,
       id: `lead-init-${index}`,
     }));
-    initialize({ leads: assignPositions(firstLeads, initialSettings), settings: initialSettings });
+    initialize({ leads: assignPositions(firstLeads, initialSettings), settings: initialSettings, alliances: storedAlliances });
   }, [initialize, triggerAlert]);
 
   // Clean up premium printed picture on conclusion of printing session
@@ -181,10 +194,11 @@ export default function App() {
       id: `lead-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
     };
     setLeads((prev) => [...prev, newLead]);
-    triggerAlert('success', `Added lead: "${newLead.name}"`);
+    setActiveView('map');
+    triggerAlert('success', `Added "${newLead.name}" — drag them from the roster onto the map to place them`);
   };
 
-  const handleAddLeadsBulk = (leadsList: Array<{ name: string; priority: PriorityLevel; notes?: string }>) => {
+  const handleAddLeadsBulk = (leadsList: Array<{ name: string; priority: PriorityLevel }>) => {
     const formatted: RallyLead[] = leadsList.map((item, index) => ({
       ...item,
       id: `lead-bulk-${Date.now()}-${index}`,
@@ -218,6 +232,34 @@ export default function App() {
       prev.map((l) => (l.id === leadId ? { ...l, locked: nextLocked } : l))
     );
     triggerAlert('info', `Position ${nextLocked ? 'LOCKED' : 'UNLOCKED'} for "${lead.name}"`);
+  };
+
+  // --- Alliance Tag Management ---
+  const handleAddAlliance = (name: string, colorId: string) => {
+    const newAlliance: Alliance = {
+      id: `alliance-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name,
+      colorId,
+    };
+    setAlliances((prev) => [...prev, newAlliance]);
+    triggerAlert('success', `Added alliance: "${name}"`);
+  };
+
+  const handleUpdateAlliance = (allianceId: string, updates: Partial<Pick<Alliance, 'name' | 'colorId'>>) => {
+    setAlliances((prev) =>
+      prev.map((a) => (a.id === allianceId ? { ...a, ...updates } : a))
+    );
+  };
+
+  const handleRemoveAlliance = (allianceId: string) => {
+    const alliance = getAllianceById(alliances, allianceId);
+    setAlliances((prev) => prev.filter((a) => a.id !== allianceId));
+    setLeads((prev) =>
+      prev.map((l) => (l.allianceId === allianceId ? { ...l, allianceId: undefined } : l))
+    );
+    if (alliance) {
+      triggerAlert('info', `Removed alliance: "${alliance.name}"`);
+    }
   };
 
   // --- Layout Positioning Algorithms ---
@@ -279,6 +321,7 @@ export default function App() {
       name,
       settings: { ...settings },
       leads: leads.map((l) => ({ ...l, position: l.position ? { ...l.position } : null })),
+      alliances: alliances.map((a) => ({ ...a })),
       createdAt: new Date().toISOString(),
     };
     addLayout(newLayout);
@@ -291,7 +334,7 @@ export default function App() {
   };
 
   const handleLoadLayout = (layout: SavedLayout) => {
-    loadDocument({ leads: layout.leads, settings: layout.settings });
+    loadDocument({ leads: layout.leads, settings: layout.settings, alliances: layout.alliances ?? [] });
     triggerAlert('success', `Loaded Layout template: "${layout.name}"`);
   };
 
@@ -318,14 +361,14 @@ export default function App() {
       id: `lead-${presetName}-${index}-${Date.now()}`,
     }));
 
-    // Load and auto-place in a single undoable step
-    loadDocument({ leads: assignPositions(nextLeads, settings), settings });
+    // Load and auto-place in a single undoable step (keep existing alliance tags)
+    loadDocument({ leads: assignPositions(nextLeads, settings), settings, alliances });
     triggerAlert('success', `Loaded demo preset ${label}`);
   };
 
   // --- Export Actions ---
   const handleExportCSV = () => {
-    exportToCSV(leads, settings);
+    exportToCSV(leads, settings, alliances);
     triggerAlert('success', 'Rally Lead CSV downloaded successfully');
   };
 
@@ -360,7 +403,7 @@ export default function App() {
   };
 
   const handleCopyShareLink = () => {
-    const hashStr = serializeLayout(settings, leads);
+    const hashStr = serializeLayout(settings, leads, alliances);
     const shareUrl = `${window.location.origin}${window.location.pathname}#${hashStr}`;
     
     navigator.clipboard.writeText(shareUrl)
@@ -417,20 +460,20 @@ export default function App() {
               <thead>
                 <tr className="border-b border-slate-300 text-[10px] font-bold text-slate-600 uppercase">
                   <th className="py-2">Rally Lead</th>
+                  <th className="py-2">Alliance</th>
                   <th className="py-2 text-center">Priority</th>
                   <th className="py-2 text-center">Location (X, Y)</th>
-                  <th className="py-2">Notes</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {leads.map((lead) => (
                   <tr key={lead.id} className="text-[10px]">
                     <td className="py-2 font-bold">{lead.name}</td>
+                    <td className="py-2">{getAllianceById(alliances, lead.allianceId)?.name || '-'}</td>
                     <td className="py-2 text-center">{PriorityLevel[lead.priority]}</td>
                     <td className="py-2 text-center font-mono">
                       {lead.position ? `(${lead.position.x}, ${lead.position.y})` : 'Unassigned'}
                     </td>
-                    <td className="py-2 text-slate-500 italic">{lead.notes || '---'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -501,11 +544,15 @@ export default function App() {
             <LeadPanel
               leads={leads}
               settings={settings}
+              alliances={alliances}
               onAddLead={handleAddLead}
               onAddLeadsBulk={handleAddLeadsBulk}
               onUpdateLead={handleUpdateLead}
               onToggleLeadLock={handleToggleLeadLock}
               onDeleteLead={handleDeleteLead}
+              onAddAlliance={handleAddAlliance}
+              onUpdateAlliance={handleUpdateAlliance}
+              onRemoveAlliance={handleRemoveAlliance}
               onAssignPositions={handleAssignPositions}
               onClearPositions={handleClearPositions}
               onExportCSV={handleExportCSV}
@@ -554,6 +601,7 @@ export default function App() {
                 <CastleMap
                   leads={leads}
                   settings={settings}
+                  alliances={alliances}
                   onUpdateLeadPosition={handleUpdateLeadPosition}
                   onToggleLeadLock={handleToggleLeadLock}
                 />

@@ -1,34 +1,41 @@
 import React, { useState } from 'react';
-import { 
-  Users, 
-  Trash2, 
-  Lock, 
-  Unlock, 
-  UserPlus, 
-  FileSpreadsheet, 
-  Download, 
-  Share2, 
-  Compass, 
-  Edit2, 
-  Check, 
+import {
+  Users,
+  Trash2,
+  Lock,
+  Unlock,
+  UserPlus,
+  FileSpreadsheet,
+  Download,
+  Share2,
+  Compass,
+  Edit2,
+  Check,
   FileText,
   LayoutGrid,
   Clock,
-  Sparkles
+  Sparkles,
+  Flag,
+  Plus,
+  X
 } from 'lucide-react';
-import { RallyLead, PriorityLevel, GridSettings } from '../types';
+import { RallyLead, PriorityLevel, GridSettings, Alliance } from '../types';
 import { getDistanceToCastle } from '../utils/assignment';
 import { getMarchTimeToCastle, formatMarchTime } from '../utils/march';
-import { PET_TIME_SLOTS, DEFAULT_PET_SLOT_ID, getPriorityStyle } from '../constants';
+import { PET_TIME_SLOTS, DEFAULT_PET_SLOT_ID, getPriorityStyle, ALLIANCE_COLOR_PALETTE, DEFAULT_ALLIANCE_COLOR_ID, getAllianceColor, getAllianceById } from '../constants';
 
 interface LeadPanelProps {
   leads: RallyLead[];
   settings: GridSettings;
+  alliances: Alliance[];
   onAddLead: (lead: Omit<RallyLead, 'id'>) => void;
-  onAddLeadsBulk: (leadsData: Array<{ name: string; priority: PriorityLevel; notes?: string }>) => void;
+  onAddLeadsBulk: (leadsData: Array<{ name: string; priority: PriorityLevel }>) => void;
   onUpdateLead: (leadId: string, updates: Partial<RallyLead>) => void;
   onToggleLeadLock: (leadId: string) => void;
   onDeleteLead: (leadId: string) => void;
+  onAddAlliance: (name: string, colorId: string) => void;
+  onUpdateAlliance: (allianceId: string, updates: Partial<Pick<Alliance, 'name' | 'colorId'>>) => void;
+  onRemoveAlliance: (allianceId: string) => void;
   onAssignPositions: () => void;
   onClearPositions: (unlockedOnly: boolean) => void;
   onExportCSV: () => void;
@@ -41,11 +48,15 @@ interface LeadPanelProps {
 export default function LeadPanel({
   leads,
   settings,
+  alliances,
   onAddLead,
   onAddLeadsBulk,
   onUpdateLead,
   onToggleLeadLock,
   onDeleteLead,
+  onAddAlliance,
+  onUpdateAlliance,
+  onRemoveAlliance,
   onAssignPositions,
   onClearPositions,
   onExportCSV,
@@ -57,9 +68,16 @@ export default function LeadPanel({
   // Input Form States
   const [nameInput, setNameInput] = useState('');
   const [priorityInput, setPriorityInput] = useState<PriorityLevel>(PriorityLevel.Normal);
-  const [notesInput, setNotesInput] = useState('');
+  const [allianceInput, setAllianceInput] = useState<string>('');
   const [usesPetInput, setUsesPetInput] = useState(false);
   const [onlineForSvsInput, setOnlineForSvsInput] = useState(true);
+
+  // Alliance manager states
+  const [newAllianceName, setNewAllianceName] = useState('');
+  const [newAllianceColorId, setNewAllianceColorId] = useState(DEFAULT_ALLIANCE_COLOR_ID);
+  const [editingAllianceId, setEditingAllianceId] = useState<string | null>(null);
+  const [editingAllianceName, setEditingAllianceName] = useState('');
+  const [editingAllianceColorId, setEditingAllianceColorId] = useState(DEFAULT_ALLIANCE_COLOR_ID);
 
   // Bulk Import modal states
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -69,7 +87,7 @@ export default function LeadPanel({
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [editingPriority, setEditingPriority] = useState<PriorityLevel>(PriorityLevel.Normal);
-  const [editingNotes, setEditingNotes] = useState('');
+  const [editingLeadAllianceId, setEditingLeadAllianceId] = useState<string>('');
   const [editingUsesPet, setEditingUsesPet] = useState(false);
   const [editingPetSlotId, setEditingPetSlotId] = useState(DEFAULT_PET_SLOT_ID);
   const [editingOnlineForSvs, setEditingOnlineForSvs] = useState(true);
@@ -77,6 +95,7 @@ export default function LeadPanel({
   // Search/Filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPriority, setFilterPriority] = useState<string>('all');
+  const [filterAlliance, setFilterAlliance] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'assigned' | 'unassigned' | 'locked'>('all');
 
   // Share status feedback
@@ -90,7 +109,7 @@ export default function LeadPanel({
     onAddLead({
       name: nameInput.trim(),
       priority: priorityInput,
-      notes: notesInput.trim() || undefined,
+      allianceId: allianceInput || undefined,
       position: null,
       locked: false,
       usesPet: usesPetInput,
@@ -99,7 +118,6 @@ export default function LeadPanel({
     });
 
     setNameInput('');
-    setNotesInput('');
     setPriorityInput(PriorityLevel.Normal);
     setUsesPetInput(false);
     setOnlineForSvsInput(true);
@@ -109,20 +127,19 @@ export default function LeadPanel({
   const handleBulkImport = () => {
     if (!bulkTextInput.trim()) return;
 
-    const list: Array<{ name: string; priority: PriorityLevel; notes?: string }> = [];
+    const list: Array<{ name: string; priority: PriorityLevel }> = [];
     const lines = bulkTextInput.split('\n');
 
     lines.forEach((line) => {
       const sanitized = line.trim();
       if (!sanitized) return;
 
-      // Format supported: "Name, Priority X, Notes" or just "Name, Priority X" or just "Name"
+      // Format supported: "Name, Priority X" or just "Name"
       const parts = sanitized.split(',');
       const rawName = parts[0].trim();
       if (!rawName) return;
 
       let priority = PriorityLevel.Normal;
-      let notes = '';
 
       if (parts.length > 1) {
         const rawPriority = parts[1].toLowerCase();
@@ -139,15 +156,7 @@ export default function LeadPanel({
         }
       }
 
-      if (parts.length > 2) {
-        notes = parts.slice(2).join(',').trim();
-      }
-
-      list.push({
-        name: rawName,
-        priority,
-        notes: notes || undefined,
-      });
+      list.push({ name: rawName, priority });
     });
 
     if (list.length > 0) {
@@ -164,7 +173,7 @@ export default function LeadPanel({
     onUpdateLead(leadId, {
       name: editingName.trim(),
       priority: editingPriority,
-      notes: editingNotes.trim() || undefined,
+      allianceId: editingLeadAllianceId || undefined,
       usesPet: editingUsesPet,
       petSlotId: editingPetSlotId,
       onlineForSvs: editingOnlineForSvs,
@@ -176,25 +185,47 @@ export default function LeadPanel({
     setEditingLeadId(lead.id);
     setEditingName(lead.name);
     setEditingPriority(lead.priority);
-    setEditingNotes(lead.notes || '');
+    setEditingLeadAllianceId(lead.allianceId || '');
     setEditingUsesPet(!!lead.usesPet);
     setEditingPetSlotId(lead.petSlotId || DEFAULT_PET_SLOT_ID);
     setEditingOnlineForSvs(lead.onlineForSvs !== false);
   };
 
+  // Alliance manager actions
+  const handleAddAllianceSubmit = () => {
+    if (!newAllianceName.trim()) return;
+    onAddAlliance(newAllianceName.trim(), newAllianceColorId);
+    setNewAllianceName('');
+    setNewAllianceColorId(DEFAULT_ALLIANCE_COLOR_ID);
+  };
+
+  const startEditingAlliance = (alliance: Alliance) => {
+    setEditingAllianceId(alliance.id);
+    setEditingAllianceName(alliance.name);
+    setEditingAllianceColorId(alliance.colorId);
+  };
+
+  const handleSaveAllianceEdit = () => {
+    if (!editingAllianceId || !editingAllianceName.trim()) return;
+    onUpdateAlliance(editingAllianceId, { name: editingAllianceName.trim(), colorId: editingAllianceColorId });
+    setEditingAllianceId(null);
+  };
+
   // Filter functionality
   const filteredLeads = leads.filter((lead) => {
-    const matchesSearch = lead.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          (lead.notes && lead.notes.toLowerCase().includes(searchTerm.toLowerCase()));
-    
+    const matchesSearch = lead.name.toLowerCase().includes(searchTerm.toLowerCase());
+
     const matchesPriority = filterPriority === 'all' || lead.priority.toString() === filterPriority;
-    
+    const matchesAlliance =
+      filterAlliance === 'all' ||
+      (filterAlliance === 'none' ? !lead.allianceId : lead.allianceId === filterAlliance);
+
     let matchesStatus = true;
     if (filterStatus === 'assigned') matchesStatus = lead.position !== null;
     if (filterStatus === 'unassigned') matchesStatus = lead.position === null;
     if (filterStatus === 'locked') matchesStatus = lead.locked;
 
-    return matchesSearch && matchesPriority && matchesStatus;
+    return matchesSearch && matchesPriority && matchesAlliance && matchesStatus;
   });
 
   const handleCopyTrigger = () => {
@@ -224,6 +255,104 @@ export default function LeadPanel({
             <FileSpreadsheet size={13} />
             Bulk Paste
           </button>
+        </div>
+
+        {/* Alliance tag manager */}
+        <div className="space-y-1.5 bg-slate-950/40 p-2 border border-slate-900 rounded-xl">
+          <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase text-slate-500 tracking-wider">
+            <Flag size={11} className="text-slate-500" />
+            <span>Alliances Rallying</span>
+          </div>
+
+          {alliances.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {alliances.map((alliance) => {
+                const color = getAllianceColor(alliance.colorId);
+                const isEditingThis = editingAllianceId === alliance.id;
+                if (isEditingThis) {
+                  return (
+                    <div key={alliance.id} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 space-y-1.5">
+                      <input
+                        type="text"
+                        value={editingAllianceName}
+                        onChange={(e) => setEditingAllianceName(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-white outline-none"
+                      />
+                      <div className="flex flex-wrap gap-1">
+                        {ALLIANCE_COLOR_PALETTE.map((swatch) => (
+                          <button
+                            key={swatch.id}
+                            onClick={() => setEditingAllianceColorId(swatch.id)}
+                            title={swatch.name}
+                            className={`w-5 h-5 rounded-full border-2 transition ${editingAllianceColorId === swatch.id ? 'border-white scale-110' : 'border-transparent'}`}
+                            style={{ backgroundColor: swatch.fill }}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex justify-end gap-1.5">
+                        <button onClick={() => setEditingAllianceId(null)} className="text-[10px] text-slate-400 px-2 py-1 hover:bg-slate-800 rounded">Cancel</button>
+                        <button onClick={handleSaveAllianceEdit} className="text-[10px] bg-emerald-600 text-white font-bold px-2.5 py-1 rounded hover:bg-emerald-500 flex items-center gap-1">
+                          <Check size={10} />
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <span
+                    key={alliance.id}
+                    className="group inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-lg border cursor-pointer"
+                    style={{ backgroundColor: `${color.fill}22`, borderColor: color.stroke, color: color.stroke }}
+                    onClick={() => startEditingAlliance(alliance)}
+                    title="Click to rename or recolor"
+                  >
+                    {alliance.name}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveAlliance(alliance.id);
+                      }}
+                      className="opacity-60 group-hover:opacity-100 hover:text-red-400 transition"
+                      title="Remove alliance"
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              placeholder="Alliance name"
+              value={newAllianceName}
+              onChange={(e) => setNewAllianceName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddAllianceSubmit(); } }}
+              className="flex-1 min-w-0 bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-600 outline-none transition"
+            />
+            <div className="flex items-center gap-1 shrink-0">
+              {ALLIANCE_COLOR_PALETTE.slice(0, 5).map((swatch) => (
+                <button
+                  key={swatch.id}
+                  onClick={() => setNewAllianceColorId(swatch.id)}
+                  title={swatch.name}
+                  className={`w-4 h-4 rounded-full border-2 transition ${newAllianceColorId === swatch.id ? 'border-white scale-110' : 'border-transparent'}`}
+                  style={{ backgroundColor: swatch.fill }}
+                />
+              ))}
+            </div>
+            <button
+              onClick={handleAddAllianceSubmit}
+              disabled={!newAllianceName.trim()}
+              className="bg-indigo-650/40 hover:bg-indigo-600 disabled:opacity-40 text-indigo-300 hover:text-white px-2 py-1 rounded-lg border border-indigo-500/20 shrink-0 cursor-pointer"
+              title="Add alliance"
+            >
+              <Plus size={13} />
+            </button>
+          </div>
         </div>
 
         {/* Placement side selector option */}
@@ -309,25 +438,29 @@ export default function LeadPanel({
               <select
                 value={priorityInput}
                 onChange={(e) => setPriorityInput(Number(e.target.value))}
+                title="Priority (used only to sort Auto Position closest-to-castle first)"
                 className="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-1.5 py-1.5 text-xs text-slate-300 outline-none transition"
               >
-                <option value={PriorityLevel.Highest}>L1 Max</option>
-                <option value={PriorityLevel.High}>L2 High</option>
-                <option value={PriorityLevel.Normal}>L3 Mid</option>
-                <option value={PriorityLevel.Low}>L4 Low</option>
-                <option value={PriorityLevel.Lowest}>L5 Min</option>
+                <option value={PriorityLevel.Highest}>1 · Closest</option>
+                <option value={PriorityLevel.High}>2</option>
+                <option value={PriorityLevel.Normal}>3</option>
+                <option value={PriorityLevel.Low}>4</option>
+                <option value={PriorityLevel.Lowest}>5 · Farthest</option>
               </select>
             </div>
           </div>
 
           <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Notes / Alliance (optional)"
-              value={notesInput}
-              onChange={(e) => setNotesInput(e.target.value)}
-              className="flex-1 bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-600 outline-none transition"
-            />
+            <select
+              value={allianceInput}
+              onChange={(e) => setAllianceInput(e.target.value)}
+              className="flex-1 bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 outline-none transition"
+            >
+              <option value="">No Alliance</option>
+              {alliances.map((alliance) => (
+                <option key={alliance.id} value={alliance.id}>{alliance.name}</option>
+              ))}
+            </select>
             <button
               type="submit"
               className="bg-indigo-650/40 hover:bg-indigo-600 text-indigo-300 hover:text-white px-3.5 py-1 rounded-lg border border-indigo-500/20 text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
@@ -371,7 +504,7 @@ export default function LeadPanel({
       <div className="p-3.5 bg-slate-900/60 border-b border-slate-900/80 space-y-2">
         <input
           type="text"
-          placeholder="Filter leads name or note..."
+          placeholder="Filter leads by name..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500/50 rounded-lg px-2.5 py-1.5 text-[11px] text-white placeholder-slate-600 outline-none transition"
@@ -379,22 +512,34 @@ export default function LeadPanel({
 
         <div className="grid grid-cols-2 gap-1.5">
           <select
+            value={filterAlliance}
+            onChange={(e) => setFilterAlliance(e.target.value)}
+            className="bg-slate-950 border border-slate-800 text-[10px] text-slate-400 px-1 py-1 rounded outline-none transition"
+          >
+            <option value="all">Any Alliance</option>
+            <option value="none">No Alliance</option>
+            {alliances.map((alliance) => (
+              <option key={alliance.id} value={alliance.id}>{alliance.name}</option>
+            ))}
+          </select>
+
+          <select
             value={filterPriority}
             onChange={(e) => setFilterPriority(e.target.value)}
             className="bg-slate-950 border border-slate-800 text-[10px] text-slate-400 px-1 py-1 rounded outline-none transition"
           >
             <option value="all">Any Priority</option>
-            <option value={PriorityLevel.Highest.toString()}>L1 (Highest)</option>
-            <option value={PriorityLevel.High.toString()}>L2 (High)</option>
-            <option value={PriorityLevel.Normal.toString()}>L3 (Normal)</option>
-            <option value={PriorityLevel.Low.toString()}>L4 (Low)</option>
-            <option value={PriorityLevel.Lowest.toString()}>L5 (Lowest)</option>
+            <option value={PriorityLevel.Highest.toString()}>1 (Closest)</option>
+            <option value={PriorityLevel.High.toString()}>2</option>
+            <option value={PriorityLevel.Normal.toString()}>3</option>
+            <option value={PriorityLevel.Low.toString()}>4</option>
+            <option value={PriorityLevel.Lowest.toString()}>5 (Farthest)</option>
           </select>
 
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value as any)}
-            className="bg-slate-950 border border-slate-800 text-[10px] text-slate-400 px-1 py-1 rounded outline-none transition"
+            className="bg-slate-950 border border-slate-800 text-[10px] text-slate-400 px-1 py-1 rounded outline-none transition col-span-2"
           >
             <option value="all">Any Placement</option>
             <option value="assigned">Assigned Only</option>
@@ -424,13 +569,18 @@ export default function LeadPanel({
 
             return (
               <div 
-                key={lead.id} 
+                key={lead.id}
+                draggable={!isEditing && !lead.position}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/plain', lead.id);
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
                 className={`p-3 rounded-xl border transition duration-150 ${
                   isOffline
                     ? 'bg-slate-950/30 border-slate-900 text-slate-400 opacity-60'
-                    : lead.position 
-                      ? 'bg-slate-900/40 border-slate-800/80' 
-                      : 'bg-amber-950/5 border-amber-900/10'
+                    : lead.position
+                      ? 'bg-slate-900/40 border-slate-800/80'
+                      : 'bg-amber-950/5 border-amber-900/10 cursor-grab active:cursor-grabbing'
                 }`}
               >
                 {/* Inline Editing Layout */}
@@ -448,22 +598,26 @@ export default function LeadPanel({
                       <select
                         value={editingPriority}
                         onChange={(e) => setEditingPriority(Number(e.target.value))}
+                        title="Priority (used only to sort Auto Position closest-to-castle first)"
                         className="bg-slate-950 border border-slate-800 rounded px-1.5 py-1 text-[11px] text-slate-300"
                       >
-                        <option value={PriorityLevel.Highest}>Highest (1)</option>
-                        <option value={PriorityLevel.High}>High (2)</option>
-                        <option value={PriorityLevel.Normal}>Normal (3)</option>
-                        <option value={PriorityLevel.Low}>Low (4)</option>
-                        <option value={PriorityLevel.Lowest}>Lowest (5)</option>
+                        <option value={PriorityLevel.Highest}>1 (Closest)</option>
+                        <option value={PriorityLevel.High}>2</option>
+                        <option value={PriorityLevel.Normal}>3</option>
+                        <option value={PriorityLevel.Low}>4</option>
+                        <option value={PriorityLevel.Lowest}>5 (Farthest)</option>
                       </select>
 
-                      <input
-                        type="text"
-                        value={editingNotes}
-                        onChange={(e) => setEditingNotes(e.target.value)}
-                        placeholder="Notes"
-                        className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[11px] text-white"
-                      />
+                      <select
+                        value={editingLeadAllianceId}
+                        onChange={(e) => setEditingLeadAllianceId(e.target.value)}
+                        className="bg-slate-950 border border-slate-800 rounded px-1.5 py-1 text-[11px] text-slate-300"
+                      >
+                        <option value="">No Alliance</option>
+                        {alliances.map((alliance) => (
+                          <option key={alliance.id} value={alliance.id}>{alliance.name}</option>
+                        ))}
+                      </select>
                     </div>
 
                     <div className="flex flex-col gap-2 bg-slate-950/40 p-2 border border-slate-900 rounded-lg">
@@ -534,25 +688,33 @@ export default function LeadPanel({
                   <div className="space-y-1.5">
                     <div className="flex items-start justify-between gap-1.5">
                       <div className="min-w-0 pr-1">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-extrabold text-xs text-white truncate max-w-[125px]">
                             {lead.name}
                           </span>
-                          
-                          {/* Priority Tag */}
+
+                          {/* Alliance Tag (primary identity color) */}
+                          {(() => {
+                            const alliance = getAllianceById(alliances, lead.allianceId);
+                            if (!alliance) return null;
+                            const color = getAllianceColor(alliance.colorId);
+                            return (
+                              <span
+                                className="text-[8px] font-extrabold px-1.5 py-0.2 rounded border uppercase tracking-wider"
+                                style={{ backgroundColor: `${color.fill}22`, borderColor: color.stroke, color: color.stroke }}
+                              >
+                                {alliance.name}
+                              </span>
+                            );
+                          })()}
+
+                          {/* Priority Tag (secondary — used only for Auto Position order) */}
                           <span className={`text-[8px] font-extrabold px-1.5 py-0.2 rounded border uppercase tracking-wider ${getPriorityStyle(lead.priority).listBadgeClass}`}>
-                            L{lead.priority}
+                            P{lead.priority}
                           </span>
                         </div>
 
-                        {/* Notes */}
-                        {lead.notes && (
-                          <div className="text-[10px] text-indigo-400/80 italic font-medium truncate mt-0.5">
-                            {lead.notes}
-                          </div>
-                        )}
-
-                        {/* Pet rotation selector - directly below notes */}
+                        {/* Pet rotation selector */}
                         <div className="mt-1.5 flex items-center gap-3 flex-wrap">
                           <label className="flex items-center gap-1.5 cursor-pointer text-[10px] text-slate-400 hover:text-slate-300 select-none">
                             <input
@@ -650,7 +812,7 @@ export default function LeadPanel({
                             COORD: <b>({lead.position!.x}, {lead.position!.y})</b>
                           </span>
                         ) : (
-                          <span className="text-amber-500/85">UNASSIGNED</span>
+                          <span className="text-amber-500/85">UNASSIGNED · drag onto map to place</span>
                         )}
                       </div>
 
@@ -780,17 +942,17 @@ export default function LeadPanel({
               <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-850 font-mono text-[10px] text-slate-400 space-y-1">
                 <div>John</div>
                 <div>Sarah, Priority 1</div>
-                <div>Mike, Priority 2, Alliance: Omega</div>
+                <div>Mike, Priority 2</div>
                 <div>Emma, Priority 4</div>
               </div>
               <p className="text-[10px] text-indigo-400/80">
-                * Priorities mapping: Priority 1 (Highest), 2 (High), 3 (Normal), 4 (Low), 5 (Lowest).
+                * Priority mapping: 1 (closest to castle) through 5 (farthest). Alliance tags aren't parsed from bulk paste yet — assign them individually after import.
               </p>
             </div>
 
             <textarea
               rows={8}
-              placeholder="Sarah, Priority 1&#10;John, Priority 2, Alliance Alpha&#10;Mike&#10;Alex, Priority 4"
+              placeholder="Sarah, Priority 1&#10;John, Priority 2&#10;Mike&#10;Alex, Priority 4"
               value={bulkTextInput}
               onChange={(e) => setBulkTextInput(e.target.value)}
               className="w-full bg-slate-950 border border-slate-850 focus:border-indigo-500 rounded-xl p-3 text-xs text-white placeholder-slate-700 outline-none transition font-mono"

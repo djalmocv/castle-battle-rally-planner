@@ -25,7 +25,6 @@ const makeLead = (overrides: Partial<RallyLead> = {}): RallyLead => ({
   priority: overrides.priority ?? PriorityLevel.Normal,
   position: overrides.position ?? null,
   locked: overrides.locked ?? false,
-  notes: overrides.notes,
   petSlotId: overrides.petSlotId,
   usesPet: overrides.usesPet,
   onlineForSvs: overrides.onlineForSvs,

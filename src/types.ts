@@ -14,13 +14,23 @@ export enum PriorityLevel {
 export interface RallyLead {
   id: string;
   name: string;
-  notes?: string;
   priority: PriorityLevel;
   position: Location2D | null;
   locked: boolean;
   petSlotId?: string; // Optional manual slot id (e.g., "slot-12-14")
   usesPet?: boolean;  // Player uses a pet
   onlineForSvs?: boolean; // Online for SvS or not
+  allianceId?: string; // Which Alliance (see Alliance) this lead belongs to for this rally
+}
+
+/**
+ * A user-defined tag identifying which allied alliance a rally lead belongs to.
+ * Recreated per rally since the set of allies rallying together changes each time.
+ */
+export interface Alliance {
+  id: string;
+  name: string;
+  colorId: string; // key into ALLIANCE_COLOR_PALETTE (see constants.ts)
 }
 
 export interface GridSettings {
@@ -38,6 +48,7 @@ export interface SavedLayout {
   name: string;
   settings: GridSettings;
   leads: RallyLead[];
+  alliances?: Alliance[];
   createdAt: string;
 }
 

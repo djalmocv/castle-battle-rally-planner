@@ -1,4 +1,4 @@
-import { PriorityLevel } from './types';
+import { PriorityLevel, Alliance } from './types';
 
 /**
  * Shared, single-source-of-truth style + label definitions used across the
@@ -90,4 +90,46 @@ export const PRIORITY_STYLES: Record<PriorityLevel, PriorityStyle> = {
 /** Returns the style for a priority level (falls back to Normal). */
 export function getPriorityStyle(level: PriorityLevel): PriorityStyle {
   return PRIORITY_STYLES[level] ?? PRIORITY_STYLES[PriorityLevel.Normal];
+}
+
+// --- Alliance colors -------------------------------------------------------
+//
+// Alliances are user-defined (name changes every rally depending on who's
+// allied that week), so their color can't be a fixed enum like priority is.
+// Instead each Alliance stores a colorId referencing one swatch below.
+
+export interface AllianceColorSwatch {
+  id: string;
+  name: string;
+  fill: string;
+  stroke: string;
+}
+
+export const ALLIANCE_COLOR_PALETTE: AllianceColorSwatch[] = [
+  { id: 'red', name: 'Red', fill: '#ef4444', stroke: '#f87171' },
+  { id: 'orange', name: 'Orange', fill: '#f97316', stroke: '#fb923c' },
+  { id: 'amber', name: 'Amber', fill: '#f59e0b', stroke: '#fbbf24' },
+  { id: 'emerald', name: 'Emerald', fill: '#10b981', stroke: '#34d399' },
+  { id: 'cyan', name: 'Cyan', fill: '#06b6d4', stroke: '#22d3ee' },
+  { id: 'blue', name: 'Blue', fill: '#3b82f6', stroke: '#60a5fa' },
+  { id: 'indigo', name: 'Indigo', fill: '#6366f1', stroke: '#818cf8' },
+  { id: 'purple', name: 'Purple', fill: '#a855f7', stroke: '#c084fc' },
+  { id: 'pink', name: 'Pink', fill: '#ec4899', stroke: '#f472b6' },
+  { id: 'lime', name: 'Lime', fill: '#84cc16', stroke: '#a3e635' },
+];
+
+export const DEFAULT_ALLIANCE_COLOR_ID = ALLIANCE_COLOR_PALETTE[0].id;
+
+/** The neutral city look for a lead with no alliance tag assigned yet. */
+export const NEUTRAL_CITY_STYLE = { fill: '#475569', stroke: '#64748b' };
+
+/** Returns the color swatch for a colorId (falls back to the neutral gray). */
+export function getAllianceColor(colorId?: string): AllianceColorSwatch {
+  const found = colorId ? ALLIANCE_COLOR_PALETTE.find((c) => c.id === colorId) : undefined;
+  return found ?? { id: 'none', name: 'None', ...NEUTRAL_CITY_STYLE };
+}
+
+/** Looks up an Alliance by id from the current roster's alliance list. */
+export function getAllianceById(alliances: Alliance[], allianceId?: string): Alliance | undefined {
+  return allianceId ? alliances.find((a) => a.id === allianceId) : undefined;
 }

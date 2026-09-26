@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GridSettings, PriorityLevel, RallyLead } from '../types';
+import { GridSettings, PriorityLevel, RallyLead, Alliance } from '../types';
 import { serializeLayout, deserializeLayout } from './serialization';
 
 const settings: GridSettings = {
@@ -12,17 +12,21 @@ const settings: GridSettings = {
   autoSide: 'right',
 };
 
+const alliances: Alliance[] = [
+  { id: 'alliance-1', name: 'WoF', colorId: 'indigo' },
+];
+
 const leads: RallyLead[] = [
   {
     id: 'orig-1',
     name: 'Commander Ünïcödé',
-    notes: 'front line',
     priority: PriorityLevel.Highest,
     position: { x: 4, y: 6 },
     locked: true,
     petSlotId: 'slot-13-15',
     usesPet: true,
     onlineForSvs: false,
+    allianceId: 'alliance-1',
   },
   {
     id: 'orig-2',
@@ -36,29 +40,35 @@ const leads: RallyLead[] = [
 
 describe('serializeLayout / deserializeLayout', () => {
   it('round-trips settings including autoSide and snapMode', () => {
-    const encoded = serializeLayout(settings, leads);
+    const encoded = serializeLayout(settings, leads, alliances);
     const decoded = deserializeLayout(encoded);
     expect(decoded).not.toBeNull();
     expect(decoded!.settings).toEqual(settings);
   });
 
-  it('round-trips lead data (name, priority, position, lock, pet, offline)', () => {
-    const encoded = serializeLayout(settings, leads);
+  it('round-trips lead data (name, priority, position, lock, pet, offline, alliance)', () => {
+    const encoded = serializeLayout(settings, leads, alliances);
     const decoded = deserializeLayout(encoded)!;
 
     const first = decoded.leads[0];
     expect(first.name).toBe('Commander Ünïcödé');
-    expect(first.notes).toBe('front line');
     expect(first.priority).toBe(PriorityLevel.Highest);
     expect(first.position).toEqual({ x: 4, y: 6 });
     expect(first.locked).toBe(true);
     expect(first.petSlotId).toBe('slot-13-15');
     expect(first.usesPet).toBe(true);
     expect(first.onlineForSvs).toBe(false);
+    expect(first.allianceId).toBe('alliance-1');
+  });
+
+  it('round-trips alliance tag definitions', () => {
+    const encoded = serializeLayout(settings, leads, alliances);
+    const decoded = deserializeLayout(encoded)!;
+    expect(decoded.alliances).toEqual(alliances);
   });
 
   it('defaults onlineForSvs to true when the flag is absent', () => {
-    const encoded = serializeLayout(settings, leads);
+    const encoded = serializeLayout(settings, leads, alliances);
     const decoded = deserializeLayout(encoded)!;
     expect(decoded.leads[1].onlineForSvs).toBe(true);
     expect(decoded.leads[1].position).toBeNull();

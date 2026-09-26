@@ -1,31 +1,29 @@
-import React, { useState, useRef, useEffect, useMemo, MouseEvent } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Lock, 
-  Unlock, 
-  Eye, 
-  EyeOff, 
-  ZoomIn, 
-  ZoomOut, 
-  Maximize, 
-  HelpCircle, 
-  RefreshCw,
-  Move
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import {
+  Lock,
+  Unlock,
+  Eye,
+  EyeOff,
+  ZoomIn,
+  ZoomOut,
+  Maximize,
+  HelpCircle,
+  RefreshCw
 } from 'lucide-react';
-import { RallyLead, GridSettings, Location2D } from '../types';
-import { 
-  getDistanceToCastle, 
-  checkOverlap, 
-  checkOverlapWithCastle, 
-  isValidState 
+import { RallyLead, GridSettings, Location2D, Alliance } from '../types';
+import {
+  getDistanceToCastle,
+  checkOverlap,
+  isValidState
 } from '../utils/assignment';
-import { getPriorityStyle, getPetSlotLabel, getPetSlotShortLabel } from '../constants';
+import { getPriorityStyle, getPetSlotLabel, getPetSlotShortLabel, getAllianceColor, getAllianceById, NEUTRAL_CITY_STYLE } from '../constants';
 import { getMarchTimeToCastle, formatMarchTime } from '../utils/march';
 import { CoordinateLabels, CastleStructure } from './MapLayers';
 
 interface CastleMapProps {
   leads: RallyLead[];
   settings: GridSettings;
+  alliances: Alliance[];
   onUpdateLeadPosition: (leadId: string, newPos: Location2D | null, swapLeadId?: string) => void;
   onToggleLeadLock: (leadId: string) => void;
 }
@@ -33,6 +31,7 @@ interface CastleMapProps {
 export default function CastleMap({
   leads,
   settings,
+  alliances,
   onUpdateLeadPosition,
   onToggleLeadLock,
 }: CastleMapProps) {
@@ -47,13 +46,22 @@ export default function CastleMap({
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [isRotated45, setIsRotated45] = useState<boolean>(true); // Rotated by default to match 45deg game perspective
   const panStart = useRef<Location2D>({ x: 0, y: 0 });
-  
-  // Interactive Move State (Drag & Drop or Click-to-Move)
+
+  // Interactive Move State (repositioning an already-placed city by dragging it)
   const [dragLeadId, setDragLeadId] = useState<string | null>(null);
   const [dragCurrentCell, setDragCurrentCell] = useState<Location2D | null>(null);
-  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null); // Click-to-move source
   const [hoveredLeadId, setHoveredLeadId] = useState<string | null>(null);
   const [showCoordinates, setShowCoordinates] = useState<boolean>(true);
+
+  // Which lead's city is currently pressed down. Used on release to toggle
+  // lock for a *locked* city (its pointerdown never starts a drag, so there's
+  // no dragCurrentCell to compare against — see handlePointerUp).
+  const pressedLeadId = useRef<string | null>(null);
+
+  // Live preview cell while an unplaced lead is being dragged in from the
+  // roster list (native HTML5 drag-and-drop, separate from the in-map
+  // pointer-drag above since the source is a different component).
+  const [externalDragCoord, setExternalDragCoord] = useState<Location2D | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -92,9 +100,10 @@ export default function CastleMap({
     }
   };
 
-  // Convert client pointer coordinate inside Map into Grid Index (integer coord)
+  // Convert client pointer coordinate inside Map into Grid Index (integer coord).
+  // Accepts any event carrying clientX/clientY — mouse, pointer, or native drag events.
   const getGridCoordFromPointer = (
-    e: React.MouseEvent<SVGSVGElement> | React.PointerEvent<SVGSVGElement>
+    e: { clientX: number; clientY: number }
   ): Location2D | null => {
     if (!svgRef.current) return null;
     
@@ -163,8 +172,31 @@ export default function CastleMap({
       setIsPanning(false);
       e.currentTarget.releasePointerCapture(e.pointerId);
     } else if (dragLeadId !== null) {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      // Determine click-vs-drag by whether the SNAPPED grid cell actually
+      // changed — immune to pixel jitter, unlike comparing raw pointer
+      // movement or relying on the native `click` event (pointer capture
+      // taken for the drag can cause Chromium to retarget that click to the
+      // capturing <svg> itself, silently breaking a click-based approach).
+      const originalLead = leads.find((l) => l.id === dragLeadId);
+      const releasedInPlace = !!(
+        originalLead?.position &&
+        dragCurrentCell &&
+        originalLead.position.x === dragCurrentCell.x &&
+        originalLead.position.y === dragCurrentCell.y
+      );
       handleCityDrop();
+      if (releasedInPlace) {
+        onToggleLeadLock(dragLeadId);
+      }
+    } else if (pressedLeadId.current) {
+      // A press on a *locked* city never starts a drag (see the per-city
+      // onPointerDown below), so any release here is unambiguously a click.
+      onToggleLeadLock(pressedLeadId.current);
     }
+    pressedLeadId.current = null;
   };
 
   // Drag operations on City blocks
@@ -175,10 +207,16 @@ export default function CastleMap({
 
     setDragLeadId(leadId);
     setDragCurrentCell({ ...lead.position });
-    setSelectedLeadId(null); // Clear selected
-    
+
     if (svgRef.current) {
-      svgRef.current.setPointerCapture(e.pointerId);
+      // Can throw (e.g. no active pointer registered for this id) in some
+      // browsers/synthetic-input scenarios. Failing to acquire capture is
+      // non-fatal — the drag still works via pointermove on the svg regardless.
+      try {
+        svgRef.current.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
     }
   };
 
@@ -193,6 +231,15 @@ export default function CastleMap({
     const targetCell = { ...dragCurrentCell };
     setDragLeadId(null);
     setDragCurrentCell(null);
+
+    // A plain click (pointerdown+pointerup with no movement) still starts and
+    // ends a "drag" at the same cell. Bail out here so it doesn't push a
+    // no-op position update onto the undo stack — the click's real job is
+    // toggling lock (handled in handlePointerUp).
+    const originalLead = leads.find((l) => l.id === currentDragId);
+    if (originalLead?.position && originalLead.position.x === targetCell.x && originalLead.position.y === targetCell.y) {
+      return;
+    }
 
     // 1. Is there overlap with another city? Check if we drop exactly on another city to swap them!
     const overlappingLead = leads.find(
@@ -220,63 +267,46 @@ export default function CastleMap({
     }
   };
 
-  // Click handle for "Click-to-Move"
-  const handleCellClick = (e: MouseEvent<SVGSVGElement>) => {
-    if (isPanning || dragLeadId) return;
-
-    if (!selectedLeadId) {
-      const target = e.target as SVGElement;
-      const cityEl = target.closest('.city-element');
-      if (cityEl) {
-        const leadId = cityEl.getAttribute('data-lead-id');
-        const lead = leads.find(l => l.id === leadId);
-        if (lead && !lead.locked) {
-          setSelectedLeadId(leadId);
-        }
-      }
-      return;
-    }
-
-    // If we already have a selected lead, and we clicked somewhere else, let's treat it as a target coordinate to move
+  // Native HTML5 drag-and-drop: receives an unplaced lead dragged in from the
+  // roster list (a sibling component, so this is a separate mechanism from
+  // the in-map pointer-drag used to reposition already-placed cities above).
+  const handleExternalDragOver = (e: React.DragEvent<SVGSVGElement>) => {
+    e.preventDefault();
     const coord = getGridCoordFromPointer(e);
-    if (!coord) {
-      setSelectedLeadId(null);
-      return;
+    if (coord) {
+      const boundX = Math.max(0, Math.min(settings.width - 2, coord.x));
+      const boundY = Math.max(0, Math.min(settings.height - 2, coord.y));
+      setExternalDragCoord({ x: boundX, y: boundY });
     }
-
-    const targetCell = { ...coord };
-
-    // Stop if target is castle
-    if (checkOverlapWithCastle(targetCell, settings)) {
-      setSelectedLeadId(null);
-      return;
-    }
-
-    // Check if target overlaps with another lead
-    const otherLead = leads.find(
-      (l) => l.id !== selectedLeadId && l.position && checkOverlap(targetCell, l.position)
-    );
-
-    if (otherLead) {
-      if (!otherLead.locked) {
-        // Swap them!
-        onUpdateLeadPosition(selectedLeadId, otherLead.position, otherLead.id);
-      }
-    } else {
-      // Place it if valid
-      if (isValidState(targetCell, selectedLeadId, leads, settings)) {
-        onUpdateLeadPosition(selectedLeadId, targetCell);
-      }
-    }
-
-    setSelectedLeadId(null);
   };
 
-  // Close selection on Esc
+  const handleExternalDragLeave = (e: React.DragEvent<SVGSVGElement>) => {
+    // Only clear when actually leaving the svg, not when moving between its children.
+    if (e.currentTarget === e.target) {
+      setExternalDragCoord(null);
+    }
+  };
+
+  const handleExternalDrop = (e: React.DragEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    setExternalDragCoord(null);
+    const leadId = e.dataTransfer.getData('text/plain');
+    if (!leadId) return;
+
+    const coord = getGridCoordFromPointer(e);
+    if (!coord) return;
+
+    // A lead dragged in from the roster list never had a prior position, so
+    // there's nothing to swap — only accept the drop onto an empty valid cell.
+    if (isValidState(coord, leadId, leads, settings)) {
+      onUpdateLeadPosition(leadId, coord);
+    }
+  };
+
+  // Cancel an in-progress in-map drag on Esc
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setSelectedLeadId(null);
         setDragLeadId(null);
         setDragCurrentCell(null);
       }
@@ -418,29 +448,6 @@ export default function CastleMap({
         ref={mapContainerRef}
         className="flex-1 w-full h-full overflow-hidden relative cursor-grab select-none select-none active:cursor-grabbing"
       >
-        {/* Coordinate Tooltip Overlay on Move instructions */}
-        <AnimatePresence>
-          {selectedLeadId && (
-            <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="absolute top-4 left-1/2 -translate-x-1/2 bg-indigo-600/95 text-white text-xs px-4 py-2 rounded-xl shadow-xl border border-indigo-400/30 flex items-center gap-2 z-10 font-medium"
-            >
-              <Move className="animate-bounce" size={14} />
-              <span>
-                Click any valid empty space or another city to swap/reposition <b>{leads.find(l => l.id === selectedLeadId)?.name}</b>
-              </span>
-              <button 
-                onClick={() => setSelectedLeadId(null)}
-                className="ml-2 hover:bg-indigo-700 bg-indigo-900/30 text-indigo-200 px-1.5 py-0.5 rounded text-[10px]"
-              >
-                Cancel
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* SVG Board wrapper */}
         <div 
           style={{
@@ -461,7 +468,9 @@ export default function CastleMap({
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onClick={handleCellClick}
+            onDragOver={handleExternalDragOver}
+            onDragLeave={handleExternalDragLeave}
+            onDrop={handleExternalDrop}
           >
             {/* Define grids / gradients */}
             <defs>
@@ -471,12 +480,6 @@ export default function CastleMap({
                 <stop offset="100%" stopColor="#7f1d1d" stopOpacity="0.0" />
               </radialGradient>
               
-              {/* Highlight active selection glowing pulse pattern */}
-              <filter id="cityGlow" x="-20%" y="-20%" width="140%" height="140%">
-                <feGaussianBlur stdDeviation="4" result="blur" />
-                <feComposite in="SourceGraphic" in2="blur" operator="over" />
-              </filter>
-
               {/* Bottom contrast gradient for city blocks */}
               <linearGradient id="cellBottomGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#000000" stopOpacity="0" />
@@ -508,11 +511,12 @@ export default function CastleMap({
               isRotated45={isRotated45}
             />
 
-            {/* 4. Active Drag-snapped preview area */}
-            {dragLeadId && dragCurrentCell && (() => {
-              const isDropValid = isValidState(dragCurrentCell, dragLeadId, leads, settings);
+            {/* 4. Active Drag-snapped preview area (in-map reposition, or a lead dragged in from the roster list) */}
+            {(dragCurrentCell || externalDragCoord) && (() => {
+              const previewCell = dragCurrentCell ?? externalDragCoord!;
+              const isDropValid = isValidState(previewCell, dragLeadId ?? '', leads, settings);
               return (
-              <g transform={`translate(${dragCurrentCell.x * cellSize}, ${dragCurrentCell.y * cellSize})`}>
+              <g transform={`translate(${previewCell.x * cellSize}, ${previewCell.y * cellSize})`}>
                 {/* 2x2 preview block */}
                 <rect
                   width={2 * cellSize}
@@ -556,9 +560,10 @@ export default function CastleMap({
                 if (!lead.position) return null;
 
                 const isCurrentlyDragging = dragLeadId === lead.id;
-                const isSelectedForMove = selectedLeadId === lead.id;
                 const priorityStyles = getPriorityStyle(lead.priority);
-                
+                const alliance = getAllianceById(alliances, lead.allianceId);
+                const cityColor = lead.allianceId ? getAllianceColor(alliance?.colorId) : NEUTRAL_CITY_STYLE;
+
                 const cityX = lead.position.x * cellSize;
                 const cityY = lead.position.y * cellSize;
                 const size = 2 * cellSize; // 2x2 grid
@@ -571,6 +576,8 @@ export default function CastleMap({
                     transform={`translate(${cityX}, ${cityY})`}
                     opacity={isCurrentlyDragging ? 0.35 : 1}
                     onPointerDown={(e) => {
+                      e.stopPropagation();
+                      pressedLeadId.current = lead.id;
                       if (!lead.locked) {
                         handleCityDragStart(e, lead.id);
                       }
@@ -578,35 +585,17 @@ export default function CastleMap({
                     onMouseEnter={() => setHoveredLeadId(lead.id)}
                     onMouseLeave={() => setHoveredLeadId(null)}
                   >
-                    {/* Glowing shadow effect if selected */}
-                    {isSelectedForMove && (
-                      <rect
-                        x={-4}
-                        y={-4}
-                        width={size + 8}
-                        height={size + 8}
-                        rx={6}
-                        fill="none"
-                        stroke="#6366f1" // indigo 500
-                        strokeWidth={3}
-                        strokeDasharray="4,2"
-                        className="animate-spin"
-                        style={{ transformOrigin: 'center' }}
-                      />
-                    )}
-
-                    {/* City Outer Block Body */}
+                    {/* City Outer Block Body — colored by Alliance tag (neutral gray if untagged) */}
                     <rect
                       x={2}
                       y={2}
                       width={size - 4}
                       height={size - 4}
                       rx={6}
-                      fill={priorityStyles.fill}
+                      fill={cityColor.fill}
                       fillOpacity={0.88}
-                      stroke={isSelectedForMove ? '#6366f1' : priorityStyles.stroke}
-                      strokeWidth={isSelectedForMove ? 3 : 2}
-                      filter={isSelectedForMove ? 'url(#cityGlow)' : undefined}
+                      stroke={cityColor.stroke}
+                      strokeWidth={2}
                       className="transition-colors duration-200"
                     />
 
@@ -621,27 +610,44 @@ export default function CastleMap({
                       className="pointer-events-none opacity-20"
                     />
 
-                    {/* Lock Icon directly inside the city rectangle top-right */}
-                    <g 
-                      transform={`translate(${size - 22}, 6) rotate(${isRotated45 ? -45 : 0}, 8, 8)`}
-                      className="cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleLeadLock(lead.id);
-                      }}
-                    >
+                    {/* Lock status indicator, top-right. Click anywhere on the city to toggle it. */}
+                    <g transform={`translate(${size - 22}, 6) rotate(${isRotated45 ? -45 : 0}, 8, 8)`}>
                       <rect
                         width={16}
                         height={16}
                         rx={4}
                         fill="rgba(15, 23, 42, 0.75)"
-                        className="hover:fill-slate-900 transition-colors"
                       />
                       {lead.locked ? (
                         <Lock size={9} fill="#ef4444" stroke="#ef4444" className="translate-x-[3.5px] translate-y-[3.5px]" />
                       ) : (
                         <Unlock size={9} stroke="#94a3b8" className="translate-x-[3.5px] translate-y-[3.5px]" />
                       )}
+                    </g>
+
+                    {/* Priority rank badge, top-left (secondary now that Alliance owns the city color) */}
+                    <g transform={`translate(6, 6) rotate(${isRotated45 ? -45 : 0}, 8, 8)`}>
+                      <rect
+                        width={16}
+                        height={16}
+                        rx={4}
+                        fill={priorityStyles.fill}
+                        fillOpacity={0.9}
+                        stroke={priorityStyles.stroke}
+                        strokeWidth={1}
+                      />
+                      <text
+                        x={8}
+                        y={8.5}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill="#ffffff"
+                        fontSize="9px"
+                        fontWeight="bold"
+                        className="select-none"
+                      >
+                        {lead.priority}
+                      </text>
                     </g>
 
                     {/* Text content wrapped safely */}
@@ -661,7 +667,7 @@ export default function CastleMap({
                         {lead.name.length > 10 ? `${lead.name.substring(0, 9)}..` : lead.name}
                       </text>
 
-                      {/* Custom lead notes below name instead of coordinates */}
+                      {/* Alliance name below the lead's name */}
                       <text
                         x={size / 2}
                         y={lead.usesPet ? size / 2 + 2 : size / 2 + 7}
@@ -673,7 +679,11 @@ export default function CastleMap({
                         letterSpacing="0.01em"
                         className="select-none"
                       >
-                        {lead.notes ? (lead.notes.length > 12 ? `${lead.notes.substring(0, 11)}..` : lead.notes) : '-'}
+                        {(() => {
+                          const name = getAllianceById(alliances, lead.allianceId)?.name;
+                          if (!name) return '-';
+                          return name.length > 12 ? `${name.substring(0, 11)}..` : name;
+                        })()}
                       </text>
 
                       {/* Pet time slot below note if enabled */}
@@ -722,33 +732,30 @@ export default function CastleMap({
           </div>
 
           <div className="space-y-1 text-[11px]">
+            {alliances.length === 0 ? (
+              <p className="text-slate-500 italic">No alliances yet — add one in the roster panel to color-code cities.</p>
+            ) : (
+              alliances.map((alliance) => {
+                const color = getAllianceColor(alliance.colorId);
+                return (
+                  <div key={alliance.id} className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded border" style={{ backgroundColor: color.fill, borderColor: color.stroke }} />
+                    <span className="text-slate-300 font-medium truncate">{alliance.name}</span>
+                  </div>
+                );
+              })
+            )}
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded bg-purple-500 border border-purple-400" />
-              <span className="text-slate-300 font-medium">Highest Priority</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded bg-blue-500 border border-blue-400" />
-              <span className="text-slate-300 font-medium">High</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded bg-emerald-500 border border-emerald-400" />
-              <span className="text-slate-300 font-medium">Normal</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded bg-amber-500 border border-amber-400" />
-              <span className="text-slate-300 font-medium">Low Priority</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded bg-slate-500 border border-slate-400" />
-              <span className="text-slate-300 font-medium">Lowest Priority</span>
+              <span className="w-2.5 h-2.5 rounded border" style={{ backgroundColor: NEUTRAL_CITY_STYLE.fill, borderColor: NEUTRAL_CITY_STYLE.stroke }} />
+              <span className="text-slate-300 font-medium">No alliance tag</span>
             </div>
           </div>
 
           <div className="text-[10px] text-slate-400/85 space-y-1 border-t border-slate-900 pt-1.5 mt-1 font-sans">
-            <p>• <b>Drag & Drop</b> to move positions freely.</p>
-            <p>• <b>Drop on another city</b> to swap them.</p>
-            <p>• Click to select and click target to <b>Move</b>.</p>
-            <p>• Click lock icon or list lock to <b>Lock</b> it.</p>
+            <p>• Small corner number is <b>Priority</b> (1 closest–5 farthest).</p>
+            <p>• <b>Drag an unassigned lead</b> from the roster onto the grid to place it.</p>
+            <p>• <b>Drag a placed city</b> to reposition; drop on another to swap.</p>
+            <p>• <b>Click a city</b> to Lock/Unlock it.</p>
           </div>
         </div>
 
@@ -758,7 +765,8 @@ export default function CastleMap({
             {(() => {
               const lead = leads.find((l) => l.id === hoveredLeadId);
               if (!lead || !lead.position) return null;
-              const priorityColor = getPriorityStyle(lead.priority);
+              const alliance = getAllianceById(alliances, lead.allianceId);
+              const allianceColor = lead.allianceId ? getAllianceColor(alliance?.colorId) : NEUTRAL_CITY_STYLE;
               const dist = getDistanceToCastle(lead.position.x, lead.position.y, settings);
               const marchSeconds = getMarchTimeToCastle(lead.position.x, lead.position.y, settings, !!lead.usesPet);
               return (
@@ -767,23 +775,21 @@ export default function CastleMap({
                     <h3 className="text-xs font-bold text-white tracking-wide truncate max-w-[120px]">
                       {lead.name}
                     </h3>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${priorityColor.badgeClass}`}>
-                      {priorityColor.name}
+                    <span
+                      className="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase"
+                      style={{ backgroundColor: `${allianceColor.fill}33`, borderColor: allianceColor.stroke, color: allianceColor.stroke }}
+                    >
+                      {alliance?.name || 'No Alliance'}
                     </span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-2">
                     <div>X, Y: <b className="text-slate-200">({lead.position.x}, {lead.position.y})</b></div>
+                    <div>Priority: <b className="text-slate-200">L{lead.priority}</b></div>
                     <div>Distance: <b className="text-slate-200">{Math.round(dist)}</b></div>
                     <div>Locked: <b className={lead.locked ? 'text-red-400' : 'text-emerald-400'}>{lead.locked ? 'Yes' : 'No'}</b></div>
-                    <div>March: <b className="text-indigo-300">{formatMarchTime(marchSeconds)}</b></div>
+                    <div className="col-span-2">March: <b className="text-indigo-300">{formatMarchTime(marchSeconds)}</b></div>
                   </div>
-
-                  {lead.notes && (
-                    <div className="text-[10px] text-indigo-200 bg-indigo-950/40 p-1.5 rounded border border-indigo-500/10 italic truncate">
-                      "{lead.notes}"
-                    </div>
-                  )}
 
                   {lead.usesPet && (
                     <div className="text-[9px] text-orange-400 bg-orange-950/20 p-1.5 rounded border border-orange-500/10 font-bold flex items-center gap-1">
